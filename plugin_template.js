@@ -7,5 +7,4 @@ videojs.registerPlugin('myPlugin', function() {
     player.el().appendChild(overlay);
 });
 
-
 videojs.getPlayer('myPlayerID').myPlugin();
