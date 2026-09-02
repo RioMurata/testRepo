@@ -1,30 +1,52 @@
 name: Create Brightcove repo
 
-# 手動でしか動かないワークフローです（最初の 1 回だけ実行）
 on:
   workflow_dispatch:
     inputs:
       repo_name:
-        description: 'testRepo'
+        description: 'Brightcove 側のリポジトリ名（半角英数字）'
         required: true
         default: 'player-assets'
 
 jobs:
   create:
     runs-on: ubuntu-latest
+    env:
+      BC_ACCOUNT_ID: ${{ secrets.BC_ACCOUNT_ID }}
+      BC_CLIENT_ID: ${{ secrets.BC_CLIENT_ID }}
+      BC_CLIENT_SECRET: ${{ secrets.BC_CLIENT_SECRET }}
+      REPO_NAME: ${{ github.event.inputs.repo_name }}
     steps:
-      - name: リポジトリを作成
+      - name: アクセストークンを取得
         run: |
-          TOKEN=$(curl -s -u "${{ secrets.BC_CLIENT_ID }}:${{ secrets.BC_CLIENT_SECRET }}" \
-            -X POST "https://oauth.brightcove.com/v4/access_token?grant_type=client_credentials" \
-            | jq -r .access_token)
+          STATUS=$(curl -sS -o /tmp/token.json -w '%{http_code}' \
+            -X POST 'https://oauth.brightcove.com/v4/access_token' \
+            -H 'Content-Type: application/x-www-form-urlencoded' \
+            -u "$BC_CLIENT_ID:$BC_CLIENT_SECRET" \
+            -d 'grant_type=client_credentials')
+          echo "OAuth HTTP status: $STATUS"
 
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "トークンを取得できません。BC_CLIENT_ID / BC_CLIENT_SECRET を確認してください。"
+          if [ "$STATUS" != "200" ]; then
+            echo "--- OAuth エラー応答 ---"
+            cat /tmp/token.json; echo
+            exit 1
+          fi
+
+          TOKEN=$(jq -r '.access_token // empty' /tmp/token.json)
+          if [ -z "$TOKEN" ]; then
+            echo "応答に access_token がありません。"
             exit 1
           fi
           echo "::add-mask::$TOKEN"
+          echo "BC_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
-          curl -sS --fail-with-body -X PUT \
-            -H "Authorization: Bearer $TOKEN" \
-            "https://repos.api.brightcove.com/v1/accounts/${{ secrets.BC_ACCOUNT_ID }}/repos/${{ github.event.inputs.repo_name }}"
+      - name: リポジトリを作成
+        run: |
+          STATUS=$(curl -sS -o /tmp/repo.json -w '%{http_code}' \
+            -X PUT \
+            -H "Authorization: Bearer $BC_TOKEN" \
+            "https://repos.api.brightcove.com/v1/accounts/$BC_ACCOUNT_ID/repos/$REPO_NAME")
+          echo "Repo API HTTP status: $STATUS"
+          cat /tmp/repo.json; echo
+
+          [ "$STATUS" = "200" ] || [ "$STATUS" = "201" ]
