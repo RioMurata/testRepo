@@ -3,27 +3,39 @@ name: Deploy to Brightcove
 on:
   push:
     branches: [main]        # 既定ブランチが master ならここを master に
-    paths: ['assets/**']   # assets が変わったときだけ動かす
-  workflow_dispatch:         # 手動実行も可能にする
-
-env:
-  BC_REPO_NAME: player-assets
+    paths: ['assets/**']    # assets が変わったときだけ動かす
+  workflow_dispatch:        # 手動実行も可能にする
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      BC_ACCOUNT_ID: ${{ secrets.BC_ACCOUNT_ID }}
+      BC_CLIENT_ID: ${{ secrets.BC_CLIENT_ID }}
+      BC_CLIENT_SECRET: ${{ secrets.BC_CLIENT_SECRET }}
+      BC_REPO_NAME: testRepo    # 手順 5 で作ったリポジトリ名に合わせる
     steps:
       - name: リポジトリを取得
         uses: actions/checkout@v4
 
       - name: アクセストークンを取得
         run: |
-          TOKEN=$(curl -s -u "${{ secrets.BC_CLIENT_ID }}:${{ secrets.BC_CLIENT_SECRET }}" \
-            -X POST "https://oauth.brightcove.com/v4/access_token?grant_type=client_credentials" \
-            | jq -r .access_token)
+          STATUS=$(curl -sS -o /tmp/token.json -w '%{http_code}' \
+            -X POST 'https://oauth.brightcove.com/v4/access_token' \
+            -H 'Content-Type: application/x-www-form-urlencoded' \
+            -u "$BC_CLIENT_ID:$BC_CLIENT_SECRET" \
+            -d 'grant_type=client_credentials')
+          echo "OAuth HTTP status: $STATUS"
 
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "トークンを取得できません。認証情報と権限を確認してください。"
+          if [ "$STATUS" != "200" ]; then
+            echo "--- OAuth エラー応答 ---"
+            cat /tmp/token.json; echo
+            exit 1
+          fi
+
+          TOKEN=$(jq -r '.access_token // empty' /tmp/token.json)
+          if [ -z "$TOKEN" ]; then
+            echo "応答に access_token がありません。"
             exit 1
           fi
           echo "::add-mask::$TOKEN"
@@ -32,13 +44,30 @@ jobs:
       - name: assets の中身をアップロード
         run: |
           shopt -s nullglob
-          for f in assets/*; do
+          FILES=(assets/*)
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "assets フォルダにファイルがありません。"
+            exit 1
+          fi
+
+          FAILED=0
+          for f in "${FILES[@]}"; do
             name=$(basename "$f")
-            echo "アップロード中: $name"
-            curl -sS --fail-with-body \
+            STATUS=$(curl -sS -o /tmp/upload.json -w '%{http_code}' \
+              -X PUT \
               -H "Authorization: Bearer $BC_TOKEN" \
               --form "contents=@$f" \
-              -X PUT \
-              "https://repos.api.brightcove.com/v1/accounts/${{ secrets.BC_ACCOUNT_ID }}/repos/$BC_REPO_NAME/files/$name"
-            echo
+              "https://repos.api.brightcove.com/v1/accounts/$BC_ACCOUNT_ID/repos/$BC_REPO_NAME/files/$name")
+
+            if [ "$STATUS" = "200" ] || [ "$STATUS" = "201" ]; then
+              echo "OK   $name"
+              jq -r '.public_url' /tmp/upload.json
+            else
+              echo "NG   $name  (HTTP $STATUS)"
+              cat /tmp/upload.json; echo
+              FAILED=1
+            fi
           done
+
+          exit $FAILED
