@@ -2,9 +2,9 @@ name: Deploy to Brightcove
 
 on:
   push:
-    branches: [main]        # 既定ブランチが master ならここを master に
-    paths: ['assets/**']    # assets が変わったときだけ動かす
-  workflow_dispatch:        # 手動実行も可能にする
+    branches: [main]
+    paths: ['*.js', '*.css']   # 直下の JS / CSS が変わったときだけ動かす
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -13,7 +13,7 @@ jobs:
       BC_ACCOUNT_ID: ${{ secrets.BC_ACCOUNT_ID }}
       BC_CLIENT_ID: ${{ secrets.BC_CLIENT_ID }}
       BC_CLIENT_SECRET: ${{ secrets.BC_CLIENT_SECRET }}
-      BC_REPO_NAME: testRepo    # 手順 5 で作ったリポジトリ名に合わせる
+      BC_REPO_NAME: testRepo
     steps:
       - name: リポジトリを取得
         uses: actions/checkout@v4
@@ -41,30 +41,29 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "BC_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
-      - name: assets の中身をアップロード
+      - name: 直下の JS / CSS をアップロード
         run: |
           shopt -s nullglob
-          FILES=(assets/*)
+          FILES=(*.js *.css)
 
           if [ ${#FILES[@]} -eq 0 ]; then
-            echo "assets フォルダにファイルがありません。"
+            echo "アップロード対象のファイルがありません。"
             exit 1
           fi
 
           FAILED=0
           for f in "${FILES[@]}"; do
-            name=$(basename "$f")
             STATUS=$(curl -sS -o /tmp/upload.json -w '%{http_code}' \
               -X PUT \
               -H "Authorization: Bearer $BC_TOKEN" \
               --form "contents=@$f" \
-              "https://repos.api.brightcove.com/v1/accounts/$BC_ACCOUNT_ID/repos/$BC_REPO_NAME/files/$name")
+              "https://repos.api.brightcove.com/v1/accounts/$BC_ACCOUNT_ID/repos/$BC_REPO_NAME/files/$f")
 
             if [ "$STATUS" = "200" ] || [ "$STATUS" = "201" ]; then
-              echo "OK   $name"
+              echo "OK   $f"
               jq -r '.public_url' /tmp/upload.json
             else
-              echo "NG   $name  (HTTP $STATUS)"
+              echo "NG   $f  (HTTP $STATUS)"
               cat /tmp/upload.json; echo
               FAILED=1
             fi
