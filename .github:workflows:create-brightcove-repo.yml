@@ -1,0 +1,30 @@
+name: Create Brightcove repo
+
+# 手動でしか動かないワークフローです（最初の 1 回だけ実行）
+on:
+  workflow_dispatch:
+    inputs:
+      repo_name:
+        description: 'testRepo'
+        required: true
+        default: 'player-assets'
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリを作成
+        run: |
+          TOKEN=$(curl -s -u "${{ secrets.BC_CLIENT_ID }}:${{ secrets.BC_CLIENT_SECRET }}" \
+            -X POST "https://oauth.brightcove.com/v4/access_token?grant_type=client_credentials" \
+            | jq -r .access_token)
+
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "トークンを取得できません。BC_CLIENT_ID / BC_CLIENT_SECRET を確認してください。"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+
+          curl -sS --fail-with-body -X PUT \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://repos.api.brightcove.com/v1/accounts/${{ secrets.BC_ACCOUNT_ID }}/repos/${{ github.event.inputs.repo_name }}"
